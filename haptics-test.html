@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Figmint haptics test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 24px 18px calc(24px + env(safe-area-inset-bottom)); background: #0b0c10; color: #eef0f5; font: 16px/1.5 Inter, system-ui, -apple-system, sans-serif; }
+  h1 { font-size: 22px; margin: 6px 0 4px; }
+  p { color: #8b93a4; margin: 0 0 18px; font-size: 14.5px; }
+  .t { display: flex; align-items: center; gap: 14px; background: #14161c; border: 1px solid #23272f; border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; }
+  .t b { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #4f7cff; color: #fff; flex: 0 0 auto; }
+  .t span { flex: 1; font-size: 15px; }
+  .t small { display: block; color: #8b93a4; font-size: 12.5px; }
+  button { font: 600 15px inherit; padding: 10px 16px; border-radius: 10px; border: 0; background: #4f7cff; color: #fff; }
+  input[switch] { transform: scale(1.3); }
+  .ov { position: relative; overflow: hidden; }
+  .lnk { font: 600 15px inherit; padding: 10px 16px; border-radius: 10px; background: #4f7cff; color: #fff; text-decoration: none; display: inline-block; }
+  .sw { position: absolute; inset: 0; opacity: 0; }
+  .sw.faint { opacity: .02; }
+  .sw input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; transform: none; }
+  #info { margin-top: 18px; font-size: 13px; color: #8b93a4; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Haptics test</h1>
+<p>Tap each one and note which you feel a tick on. Then tell me the numbers.</p>
+
+<div class="t"><b>1</b><span>Real switch<small>flip it yourself</small></span><input type="checkbox" switch></div>
+<div class="t"><b>2</b><span>Hidden switch (current app method)<small>tap the button</small></span><button id="m2">Tap</button></div>
+<div class="t"><b>3</b><span>Off-screen switch, visible<small>tap the button</small></span><button id="m3">Tap</button></div>
+<div class="t"><b>4</b><span>Vibration (Android)<small>tap the button</small></span><button id="m4">Tap</button></div>
+
+<div class="t"><b>5</b><span>Button with invisible switch on top<small>tap it - does it tick AND count?</small></span><button id="m5" class="ov">Tap <i>0</i><label class="sw"><input type="checkbox" switch></label></button></div>
+<div class="t"><b>6</b><span>Link with invisible switch on top<small>tap it - does it tick AND count?</small></span><a href="#" id="m6" class="ov lnk">Tap <i>0</i><label class="sw"><input type="checkbox" switch></label></a></div>
+<div class="t"><b>7</b><span>Faint (almost invisible) switch on top<small>tap it - does it tick AND count?</small></span><button id="m7" class="ov">Tap <i>0</i><label class="sw faint"><input type="checkbox" switch></label></button></div>
+<div id="info"></div>
+<script>
+  const ios = (navigator.userAgent.match(/OS (\d+)_(\d+)/) || []).slice(1).join('.');
+  document.getElementById('info').textContent =
+    `Phone iOS version (from browser): ${ios || 'not iOS'}\nOpened as: ${navigator.standalone || matchMedia('(display-mode: standalone)').matches ? 'home-screen app' : 'browser tab'}\nVibration API: ${'vibrate' in navigator ? 'yes' : 'no'}`;
+  const hidden = () => {
+    const l = document.createElement('label'); l.setAttribute('aria-hidden', 'true'); l.style.display = 'none';
+    const i = document.createElement('input'); i.type = 'checkbox'; i.setAttribute('switch', '');
+    l.appendChild(i); document.head.appendChild(l); l.click(); l.remove();
+  };
+  const off = (() => {
+    const l = document.createElement('label'); l.style.cssText = 'position:fixed;left:-200px;top:0;width:60px;height:40px';
+    const i = document.createElement('input'); i.type = 'checkbox'; i.setAttribute('switch', ''); l.appendChild(i); document.body.appendChild(l); return l;
+  })();
+  document.getElementById('m2').onclick = hidden;
+  document.getElementById('m3').onclick = () => off.click();
+  for (const id of ['m5', 'm6', 'm7']) { const el = document.getElementById(id), n = el.querySelector('i');
+    let last = 0; el.addEventListener('click', e => { if (id === 'm6' && e.target.tagName !== 'INPUT') e.preventDefault(); const t = Date.now(); if (t - last > 120) n.textContent = +n.textContent + 1; last = t; }); }
+  document.getElementById('m4').onclick = () => { try { navigator.vibrate ? navigator.vibrate(15) : alert('No vibration API on this phone'); } catch (e) { alert(e.message); } };
+</script>
+</body>
+</html>

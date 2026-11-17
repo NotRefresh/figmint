@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b0c10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Figmint">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>Figmint</title>
+<!-- Unlock screen for the encrypted site. Built by tools/publish.py; the real app arrives in app.bin. -->
+<style>
+  :root { --bg: #0b0c10; --card: #14161c; --ink: #eef0f5; --muted: #8b93a4; --line: #23272f; --accent: #4f7cff; --bad: #f05252; color-scheme: dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #121214; --card: #1c1c1f; --ink: #f4f4f5; --muted: #a1a1aa; --line: #2e2e33; --bad: #ff7b70; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 16px;
+    background: var(--bg); color: var(--ink); font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .box { width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 28px 24px 24px; text-align: center; }
+  .logo { --s: 84px; width: var(--s); height: var(--s); display: block; margin: 0 auto 10px; background: url(img/stud-gold.png) 0 0 / auto 100% repeat-x;
+    animation: spin 3.6s steps(1) infinite; filter: drop-shadow(0 4px 6px rgba(0,0,0,.25)); }
+  @keyframes spin { 0% { background-position-x: 0; animation-timing-function: steps(24); } 34%, 100% { background-position-x: calc(-24 * var(--s)); } }
+  @media (prefers-reduced-motion: reduce) { .logo { animation: none; } }
+  h1 { margin: 0; font-size: 24px; letter-spacing: -.01em; }
+  p { margin: 6px 0 18px; color: var(--muted); font-size: 14.5px; }
+  input { width: 100%; height: 48px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+    padding: 0 14px; font: inherit; outline: none; }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+  button { width: 100%; height: 48px; margin-top: 10px; border: 0; border-radius: 14px; background: var(--accent); color: #fff;
+    font: 650 16px system-ui, sans-serif; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: progress; }
+  .msg { min-height: 22px; margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .msg.bad { color: var(--bad); }
+  .hint { margin: 12px 0 0; font-size: 13px; }
+  .loading .box { display: none; }
+  .spin { display: none; width: 36px; height: 36px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--accent); animation: r 1s linear infinite; }
+  .loading .spin { display: block; }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body class="loading">
+<div class="spin" aria-label="Loading"></div>
+<form class="box" id="form" autocomplete="on">
+  <span class="logo" aria-hidden="true"></span>
+  <h1>Figmint</h1>
+  <p id="lead">This collection is private. Open your unlock link, or paste it below to unlock this device.</p>
+  <div id="passBox">
+  <input type="text" name="username" value="figmint" autocomplete="username" hidden>
+  <input type="password" id="pass" autocomplete="current-password" placeholder="Paste your unlock link" aria-label="Unlock link" required>
+  <button id="go" type="submit">Unlock</button></div>
+  <p class="hint" id="hint" hidden>Apps on your home screen keep their own storage, so paste your link here once and it stays unlocked.</p>
+  <div class="msg" id="msg" role="status"></div>
+</form>
+<script>
+(() => {
+  const enc = s => new TextEncoder().encode(s);
+  const KEY_LABEL = enc('figmint-key'), DATA_LABEL = enc('figmint-data');
+  const bytes = t => Uint8Array.from(atob(t), c => c.charCodeAt(0));
+  const fresh = u => fetch(u, { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error(u + ' ' + r.status); return r; });
+  const $ = id => document.getElementById(id);
+
+  // The unlocked key is kept on this device only, as a non-exportable CryptoKey in IndexedDB.
+  const db = () => new Promise((res, rej) => { const o = indexedDB.open('figmint-lock', 1);
+    o.onupgradeneeded = () => o.result.createObjectStore('k'); o.onsuccess = () => res(o.result); o.onerror = () => rej(o.error); });
+  const idb = async (mode, fn) => { const d = await db(); return new Promise((res, rej) => {
+    const t = d.transaction('k', mode), r = fn(t.objectStore('k')); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); }); };
+  const savedKey = () => idb('readonly', s => s.get('data')).catch(() => null);
+  const saveKey = k => idb('readwrite', s => s.put(k, 'data')).catch(() => {});
+  const forget = () => idb('readwrite', s => s.delete('data')).catch(() => {});
+
+  async function open(buf, key) {
+    const sealed = new Uint8Array(buf);
+    const packed = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: sealed.slice(0, 12), additionalData: DATA_LABEL }, key, sealed.slice(12));
+    return new Response(new Blob([packed]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  }
+
+  let infoP;
+  const info = () => infoP ??= fresh('keys.json').then(r => r.json());
+
+  async function keyFrom(passphrase) {
+    const i = await info();
+    const secret = await crypto.subtle.importKey('raw', enc(passphrase.normalize('NFKC')), 'PBKDF2', false, ['deriveKey']);
+    const personal = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: bytes(i.salt), iterations: i.iterations },
+      secret, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    return openSlots(personal);
+  }
+
+  // A secret unlock link carries a random personal key after "#unlock=" (never sent to the server).
+  async function keyFromLink(code) {
+    const b = atob(code.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((code.length + 3) % 4));
+    const personal = await crypto.subtle.importKey('raw', Uint8Array.from(b, c => c.charCodeAt(0)), 'AES-GCM', false, ['decrypt']);
+    return openSlots(personal);
+  }
+
+  async function openSlots(personal) {
+    for (const slot of (await info()).slots) {
+      try {
+        const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes(slot.iv), additionalData: KEY_LABEL }, personal, bytes(slot.key));
+        return await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+      } catch { /* not this slot */ }
+    }
+    return null;
+  }
+
+  async function start(key) {
+    const app = JSON.parse(await open(await (await fresh('app.bin')).arrayBuffer(), key));   // throws if the key is out of date
+    const names = JSON.parse(await open(await (await fresh('data/index.bin')).arrayBuffer(), key));
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input && input.url || '';
+      const rel = url.startsWith(location.origin) ? new URL(url).pathname.replace(/^\//, '') : url.replace(/^\.?\//, '');
+      if (names[rel]) return realFetch(`data/${names[rel]}.bin`).then(r => r.arrayBuffer()).then(b => open(b, key))
+        .then(t => new Response(t, { headers: { 'Content-Type': 'application/json' } }));
+      return realFetch(input, init);
+    };
+    window.figmintLock = async () => { await forget(); location.reload(); };
+    mount(app);
+  }
+
+  // Swap this page for the real app: same head/body, then run its scripts in order.
+  function mount(app) {
+    const doc = new DOMParser().parseFromString(app.html, 'text/html');
+    const take = el => { const s = [...el.querySelectorAll('script')]; s.forEach(x => x.remove()); return s; };
+    const run = list => list.forEach(s => { const e = document.createElement('script');
+      e.textContent = s.src ? app.js[s.getAttribute('src')] || '' : s.textContent; document.body.appendChild(e); });
+    const headScripts = take(doc.head), bodyScripts = take(doc.body);
+    for (const a of doc.documentElement.attributes) document.documentElement.setAttribute(a.name, a.value);
+    document.head.replaceChildren(...[...doc.head.childNodes].map(n => document.importNode(n, true)));
+    document.body.className = ''; for (const a of doc.body.attributes) document.body.setAttribute(a.name, a.value);
+    document.body.replaceChildren(...[...doc.body.childNodes].map(n => document.importNode(n, true)));
+    run(headScripts); run(bodyScripts);
+  }
+
+  const showForm = (text, bad) => { document.body.classList.remove('loading'); $('msg').textContent = text || ''; $('msg').className = 'msg' + (bad ? ' bad' : '');
+    if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) $('hint').hidden = false;
+    info().then(i => { if (i.passphrase) { $('pass').placeholder = 'Unlock link or passphrase'; $('pass').setAttribute('aria-label', 'Unlock link or passphrase');
+      $('lead').textContent = 'This collection is private. Paste your unlock link or enter your passphrase to unlock this device.'; } }).catch(() => {}); };
+
+  $('form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const pass = $('pass').value.trim(); if (!pass) return;
+    $('go').disabled = true; showForm('Unlocking…');
+    try {
+      // a pasted unlock link (or just its code), otherwise a passphrase if this site has any
+      const code = (pass.match(/unlock=([A-Za-z0-9_-]{20,})/) || pass.match(/^([A-Za-z0-9_-]{40,46})$/) || [])[1];
+      const key = code ? await keyFromLink(code) : (await info()).passphrase ? await keyFrom(pass) : null;
+      if (!key) { showForm(code ? 'That unlock link is no longer valid.' : 'That isn\'t a working unlock link.', true); $('go').disabled = false; $('pass').select(); return; }
+      await saveKey(key);
+      document.body.classList.add('loading');
+      await start(key);
+    } catch (err) { showForm('Couldn\'t load: ' + err.message, true); $('go').disabled = false; }
+  });
+
+  addEventListener('hashchange', () => { if (/^#unlock=/.test(location.hash) && $('form')) location.reload(); });
+
+  (async () => {
+    if (!window.crypto?.subtle || !window.DecompressionStream) return showForm('This browser is too old to unlock Figmint.', true);
+    const link = location.hash.match(/^#unlock=([A-Za-z0-9_-]{20,})$/);
+    if (link) {
+      history.replaceState(null, '', location.pathname);   // keep the secret out of the address bar and history
+      try {
+        const k = await keyFromLink(link[1]);
+        if (!k) return showForm('That unlock link is no longer valid.', true);
+        await saveKey(k);
+        return await start(k);
+      } catch (err) { return showForm('Couldn\'t unlock: ' + err.message, true); }
+    }
+    const key = await savedKey();
+    if (!key) return showForm();
+    try { await start(key); } catch { await forget(); showForm('Please unlock again.'); }
+  })();
+})();
+</script>
+</body>
+</html>
